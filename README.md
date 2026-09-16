@@ -309,6 +309,8 @@ and all parameters are still bound, so there is no SQL-injection surface.
 ```
 tasklist/
 ├── Cargo.toml
+├── Dockerfile              # multi-stage build, used for deployment
+├── .dockerignore
 ├── .env.example            # template — copy to .env, never committed
 ├── .gitignore
 ├── README.md
@@ -333,7 +335,87 @@ contract so a column rename does not silently change the API.
 
 ---
 
-## 6. Troubleshooting
+## 6. Deploying it somewhere public
+
+The app is deployment-ready: it reads `DATABASE_URL` from the environment, and
+if the platform sets `PORT` it binds `0.0.0.0:$PORT` automatically (otherwise it
+uses `SERVER_ADDR`). A multi-stage `Dockerfile` is included.
+
+The Docker image is built with `--features tls`, because managed MySQL providers
+require an encrypted connection — unlike a local server.
+
+### Run it as a container locally first
+
+```bash
+docker build -t tasklist-api .
+docker run --rm -p 8080:8080   -e DATABASE_URL='mysql://user:password@host:3306/tasklist'   tasklist-api
+```
+
+### Option A - Railway (simplest; MySQL and the app in one project)
+
+1. Sign in to <https://railway.app> with GitHub.
+2. **New Project → Deploy from GitHub repo** → pick this repository.
+3. In the same project: **New → Database → Add MySQL**.
+4. On the app service, open **Variables** and add:
+   `DATABASE_URL = ${{MySQL.MYSQL_URL}}`
+   (Railway substitutes the database's own connection string. It sets `PORT`
+   itself, so leave `SERVER_ADDR` unset.)
+5. **Settings → Networking → Generate Domain** to get a public URL.
+6. Load the schema and dummy data into the managed database — copy the MySQL
+   service's public connection details from its **Connect** tab:
+
+   ```bash
+   mysql -h <host> -P <port> -u <user> -p<password> < sql/01_schema.sql
+   mysql -h <host> -P <port> -u <user> -p<password> < sql/02_dummy_data.sql
+   ```
+
+Railway's free credit does not cover a service running continuously, so this
+needs the paid hobby plan for anything long-lived.
+
+### Option B - Render + Aiven (no cost, two accounts)
+
+Render's free tier has no MySQL, so the database comes from Aiven's always-free
+MySQL plan.
+
+1. **Database** — create a free MySQL service at <https://aiven.io>. From the
+   service overview copy the connection URI; it looks like
+   `mysql://avnadmin:<password>@<host>:<port>/defaultdb?ssl-mode=REQUIRED`.
+2. **Load the data** into it:
+
+   ```bash
+   mysql -h <host> -P <port> -u avnadmin -p<password> --ssl-mode=REQUIRED < sql/01_schema.sql
+   mysql -h <host> -P <port> -u avnadmin -p<password> --ssl-mode=REQUIRED < sql/02_dummy_data.sql
+   ```
+3. **App** — at <https://render.com>: **New → Web Service**, connect this repo,
+   choose **Docker** as the runtime.
+4. Add an environment variable `DATABASE_URL` set to the Aiven URI, but pointing
+   at the `tasklist` database rather than `defaultdb`, and with the query string
+   dropped:
+   `mysql://avnadmin:<password>@<host>:<port>/tasklist`
+5. Deploy. Render sets `PORT` itself.
+
+Render's free instances sleep after inactivity, so the first request after an
+idle period takes ~30 seconds to wake up. Worth warning a reviewer about.
+
+### After deploying
+
+```bash
+curl https://<your-app-url>/health
+curl https://<your-app-url>/api/tasks
+```
+
+`/health` confirms the database connection; `/api/tasks` should return
+`"count": 12`.
+
+### A note on the database user
+
+Both options above use the database's admin account for simplicity. For anything
+beyond a demo, create a restricted user with `sql/00_app_user.sql` and point
+`DATABASE_URL` at that instead.
+
+---
+
+## 7. Troubleshooting
 
 | Problem | Fix |
 | ------- | --- |

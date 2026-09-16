@@ -31,8 +31,19 @@ impl Config {
              MySQL connection string there.",
         )?;
 
-        let server_addr =
-            env::var("SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+        // Hosting platforms (Railway, Render, Fly, Koyeb, ...) inject the port
+        // to listen on as PORT and require the process to bind 0.0.0.0 rather
+        // than localhost, so PORT takes priority over SERVER_ADDR when set.
+        let server_addr = match env::var("PORT") {
+            Ok(port) => {
+                let port: u16 = port
+                    .trim()
+                    .parse()
+                    .context("PORT must be a number between 1 and 65535")?;
+                format!("0.0.0.0:{port}")
+            }
+            Err(_) => env::var("SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string()),
+        };
 
         let db_max_connections = match env::var("DB_MAX_CONNECTIONS") {
             Ok(value) => value
